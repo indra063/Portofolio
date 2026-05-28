@@ -4,7 +4,7 @@ export const siteConfig = {
   name: "Portfolio Indra",
   description:
     "A modern, accessible portfolio template built with Next.js, Tailwind CSS, and TypeScript.",
-  url: "https://example.com",
+  url: "https://indra063.vercel.app",
   ogImage: "/og-image.png",
   creator: "@indra063",
   authors: [
