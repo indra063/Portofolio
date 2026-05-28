@@ -19,7 +19,7 @@ const ENTRIES: Entry[] = [
     period: "2018 – 2022",
   },
   {
-    school: "MAN 1 Kotawawirngin Timur",
+    school: "MAN 1 East Kotawaringin Regency",
     degree: "Social Science Major, High School Diploma",
     period: "2015-2018",
   },
