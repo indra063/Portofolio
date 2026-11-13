@@ -96,7 +96,8 @@ void main() {
   // Mouse repel: dots near the cursor push away.
   vec2 toMouse = pos - uMouse;
   float dist = length(toMouse);
-  float influence = smoothstep(uRepelRadius, 0.0, dist) * uMouseActive;
+  float influence =
+    (1.0 - smoothstep(0.0, uRepelRadius, dist)) * uMouseActive;
   pos += normalize(toMouse + vec2(0.0001)) * influence * uRepelStrength;
 
   // Expanding ripple ring from fast cursor movement.
@@ -143,11 +144,12 @@ void main() {
       step(abs(c.x), 0.06) * step(abs(c.y), 0.32),
       step(abs(c.y), 0.06) * step(abs(c.x), 0.32)
     );
-    float ring = smoothstep(0.48, 0.44, d) * (1.0 - smoothstep(0.38, 0.34, d));
+    float ring =
+      (1.0 - smoothstep(0.44, 0.48, d)) * smoothstep(0.34, 0.38, d);
     a = max(bar, ring) * vAlpha;
   } else {
     // Soft round dot.
-    a = smoothstep(0.5, 0.12, d) * vAlpha;
+    a = (1.0 - smoothstep(0.12, 0.5, d)) * vAlpha;
   }
 
   if (a < 0.01) discard;
@@ -307,62 +309,10 @@ export function DottedField(props: DottedFieldProps): ReactNode {
         v: gl.getShaderInfoLog(program.vertexShader),
         f: gl.getShaderInfoLog(program.fragmentShader),
       });
+      if (gl.canvas.parentElement === el) el.removeChild(gl.canvas);
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
       return;
     }
-
-    const scene = new Transform();
-    let mesh: Mesh | null = null;
-    let aspect = 1;
-
-    const buildMesh = (): void => {
-      const w = el.clientWidth;
-      const h = el.clientHeight;
-      if (w === 0 || h === 0) return;
-      const nextAspect = w / h;
-      if (mesh && Math.abs(nextAspect - aspect) < 0.1) return;
-      aspect = nextAspect;
-      const points = buildGrid(aspect);
-      const count = points.length;
-      const position = new Float32Array(count * 2);
-      const seed = new Float32Array(count);
-      const pin = new Float32Array(count);
-      points.forEach((p, i) => {
-        position[i * 2] = p.x;
-        position[i * 2 + 1] = p.y;
-        seed[i] = p.seed;
-        pin[i] = p.pin;
-      });
-      const geometry = new Geometry(gl, {
-        position: { size: 2, data: position },
-        aSeed: { size: 1, data: seed },
-        aPin: { size: 1, data: pin },
-      });
-      const next = new Mesh(gl, {
-        geometry,
-        program,
-        mode: gl.POINTS,
-      });
-      next.setParent(scene);
-      if (mesh) mesh.setParent(null);
-      mesh = next;
-    };
-
-    const onResize = (): void => {
-      const w = el.clientWidth;
-      const h = el.clientHeight;
-      if (w === 0 || h === 0) return;
-      renderer.setSize(w, h);
-      program.uniforms.uResolution.value = [
-        gl.drawingBufferWidth,
-        gl.drawingBufferHeight,
-      ];
-      program.uniforms.uAspect.value = w / h;
-      buildMesh();
-    };
-
-    onResize();
-    const ro = new ResizeObserver(onResize);
-    ro.observe(el);
 
     // Mouse: lerped toward the pointer so dots trail with a soft lag.
     const mouseTarget: [number, number] = [0, 0];
@@ -394,6 +344,98 @@ export function DottedField(props: DottedFieldProps): ReactNode {
     window.addEventListener("pointermove", onPointerMove);
     document.documentElement.addEventListener("pointerleave", onPointerLeave);
 
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+
+    const render = (time: number): void => {
+      program.uniforms.uTime.value = time;
+      program.uniforms.uMouse.value = [...mouseCurrent];
+      program.uniforms.uMouseActive.value = activeCurrent;
+      program.uniforms.uRippleOrigin.value = [...rippleOrigin];
+      program.uniforms.uRippleAge.value =
+        rippleStart < 0 ? -1 : (performance.now() - rippleStart) / 1000;
+      program.uniforms.uPointSize.value = pr.current.pointSize ?? D.pointSize;
+      program.uniforms.uRepelRadius.value =
+        pr.current.repelRadius ?? D.repelRadius;
+      program.uniforms.uRepelStrength.value =
+        pr.current.repelStrength ?? D.repelStrength;
+      renderer.render({ scene });
+    };
+
+    const scene = new Transform();
+    let mesh: Mesh | null = null;
+    let aspect = 1;
+    let builtAspect = 1;
+    let needsRebuild = false;
+    let lastBuildAt = 0;
+
+    const buildMesh = (): void => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w === 0 || h === 0) return;
+      const points = buildGrid(aspect);
+      const count = points.length;
+      const position = new Float32Array(count * 2);
+      const seed = new Float32Array(count);
+      const pin = new Float32Array(count);
+      points.forEach((p, i) => {
+        position[i * 2] = p.x;
+        position[i * 2 + 1] = p.y;
+        seed[i] = p.seed;
+        pin[i] = p.pin;
+      });
+      const geometry = new Geometry(gl, {
+        position: { size: 2, data: position },
+        aSeed: { size: 1, data: seed },
+        aPin: { size: 1, data: pin },
+      });
+      const next = new Mesh(gl, {
+        geometry,
+        program,
+        mode: gl.POINTS,
+      });
+      next.setParent(scene);
+      if (mesh) {
+        // Free the old geometry's GPU buffers before dropping it.
+        mesh.geometry.remove();
+        mesh.setParent(null);
+      }
+      mesh = next;
+      builtAspect = aspect;
+      lastBuildAt = performance.now();
+      needsRebuild = false;
+    };
+
+    const onResize = (): void => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w === 0 || h === 0) return;
+      renderer.setSize(w, h);
+      program.uniforms.uResolution.value = [
+        gl.drawingBufferWidth,
+        gl.drawingBufferHeight,
+      ];
+      // Keep the aspect current so mouse mapping never goes stale; the
+      // mesh itself rebuilds (throttled) in the tick loop.
+      aspect = w / h;
+      program.uniforms.uAspect.value = aspect;
+      if (!mesh) {
+        buildMesh();
+      } else if (Math.abs(aspect - builtAspect) >= 0.02) {
+        needsRebuild = true;
+      }
+      // Resizing clears the drawing buffer: repaint the static frame.
+      if (reducedMotion) {
+        if (needsRebuild) buildMesh();
+        render(0);
+      }
+    };
+
+    onResize();
+    const ro = new ResizeObserver(onResize);
+    ro.observe(el);
+
     const syncColors = (): void => {
       program.uniforms.uColor.value = readCssColor(
         document.documentElement,
@@ -410,10 +452,6 @@ export function DottedField(props: DottedFieldProps): ReactNode {
       attributeFilter: ["class", "data-theme", "style"],
     });
     syncColors();
-
-    const reducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)"
-    ).matches;
 
     let raf = 0;
     let visible = true;
@@ -435,21 +473,6 @@ export function DottedField(props: DottedFieldProps): ReactNode {
       { rootMargin: "100px" }
     );
     io.observe(el);
-
-    const render = (time: number): void => {
-      program.uniforms.uTime.value = time;
-      program.uniforms.uMouse.value = [...mouseCurrent];
-      program.uniforms.uMouseActive.value = activeCurrent;
-      program.uniforms.uRippleOrigin.value = [...rippleOrigin];
-      program.uniforms.uRippleAge.value =
-        rippleStart < 0 ? -1 : (performance.now() - rippleStart) / 1000;
-      program.uniforms.uPointSize.value = pr.current.pointSize ?? D.pointSize;
-      program.uniforms.uRepelRadius.value =
-        pr.current.repelRadius ?? D.repelRadius;
-      program.uniforms.uRepelStrength.value =
-        pr.current.repelStrength ?? D.repelStrength;
-      renderer.render({ scene });
-    };
 
     if (reducedMotion) {
       // One static frame, no animation loop.
@@ -479,6 +502,9 @@ export function DottedField(props: DottedFieldProps): ReactNode {
         }
         prevMouse = [...mouseCurrent];
         prevTime = now;
+
+        // Rebuild the mesh if the aspect changed (throttled).
+        if (needsRebuild && now - lastBuildAt >= 150) buildMesh();
 
         if (visible && onScreen) render((now - t0) / 1000);
         raf = requestAnimationFrame(tick);
