@@ -8,6 +8,16 @@ stock imagery.
 
 - **Dotted forms.** Shapes are built from a field of dots, never solid
   fills. Dots are round and soft, sized by the piece, never square.
+- **The hero is a real dotted world map.** `components/shaders/dotted-field.tsx`
+  draws ~6,800 dots on land only, from a Natural Earth land-110m mask
+  (240x96 grid, lon -180..180, lat 84..-60, Antarctica cropped, packed
+  as base64 bits in the file). The map is the form — no generic dot
+  field. City pins sit on New York, London, Tokyo, Sydney and São Paulo.
+- **Cursor does something obvious.** Dots near the cursor flare into the
+  accent color (`--ring`, the site's blue), grow ~2.5x, and push away.
+  A fast swipe fires an expanding ripple ring that pops dots as it
+  passes. If the cursor effect is not visible at a glance, it is too
+  subtle — turn up the pop, not the dot count.
 - **Coordinate pins.** A few crosshair pins (+ inside a thin ring) sit on
   anchor points of the form and drift with it. They are the signature
   detail — every WebGL piece gets 3–5 of them, every SVG piece gets at
@@ -24,7 +34,8 @@ stock imagery.
 ## Placement
 
 - **Hero: one signature WebGL piece.** `components/shaders/dotted-field.tsx`
-  is the first one — a dotted field behind the hero content. Only one
+  is the first one — a dotted world map behind the hero content, with
+  accent color pop and a ripple on fast cursor swipes. Only one
   WebGL canvas per page.
 - **Everything else: SVG.** About, projects, contact and empty states get
   animated SVG illustrations in the same dotted style (see
@@ -40,6 +51,16 @@ stock imagery.
 - Read colors from CSS variables at runtime and watch for theme changes
   (see `readForegroundColor` in `dotted-field.tsx`), so the piece follows
   light/dark without a reload.
+
+## Regenerating the land mask
+
+Source: Natural Earth land-110m via `world-atlas@2`
+(`https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json`). Rasterizer:
+`scripts/rasterize-land-mask.js` (decodes the TopoJSON arcs, ray-casts
+cell centers, packs bits base64). Grid: 240x96, lon -180..180,
+lat 84..-60. Paste the new `maskB64` into `LAND_MASK_B64` in
+`dotted-field.tsx` and check the ASCII preview still reads as a world
+map before pushing.
 
 ## Reference
 
